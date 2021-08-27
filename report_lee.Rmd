@@ -1,0 +1,610 @@
+---
+title: "심혈관 질환 환자 예측 보고서"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+### 1. 요약(초록)
+
+심혈관 질환을 과연 예측할 수 있을까?라는 질문에서부터 시작한 이번 분석은  Cardiovascular Disease dataset을 바탕으로 진행하였다. 
+
+의료 검사한 환자들의 정보들을 바탕으로 데이터셋에는 12개의 독립변수와 1개의 타겟변수인 cardio변수가 포함되어있다. 환자들의 콜레스테롤 정도, 흡연 여부 등을 토대로 모델을 만들어 환자들의 정보를 가지고 심혈관 질환일 것인지 아닌지를 얼마나 잘 예측할 수 있을지 보고자 한다. 기존의 데이터에는 제외해야할 변수가 없어 환자마다 고유한 값인 id만을 제외하고 분석을 진행하였다. 
+
+결과를 살펴보면 4가지의 방법 중 randomforest 방법을 토대로 한 분석이 가장 성능이 높다고 나왔다. 이 모델을 토대로 추가적인 검사가 필요한 환자를 어느정도 예측할 수 있을 것으로 보인다. 
+
+### 2. 분석 주제
+Cardiovascular Disease dataset를 이용하여, 심혈관 환자를 가장 잘 예측해주는 모델을 찾는다. 
+
+### 3. 데이터 선정 
+데이터는 Cardiovascular Disease dataset을 사용하였다. 출처 : Kaggle (https://www.kaggle.com/sulianova/cardiovascular-disease-dataset)
+
+특성 : 7만명의 환자들의 검사 결과를 통해 데이터를 수집하였기에 머신러닝 모델을 만들기에 적합하다. 
+변수 : age, height, weight, gender, ap_hi(systolic blood pressure), ap_lo(Diastolic blood pressure), cholesterol, gluc(glucose), smoke, alco(alchol intake), active(physical activity), cardio(prescence or absence of cardiovascular disease)
+
+### 4-1. 모델링 준비하기
+#### 분석 목적 및 방법
+원본데이터의 id를 제외한 변수들을 가지고 분석하여 모델을 4개를 만들고, 모델들의 성능평가를 통해 최종적으로 성능이 가장 좋은 모델을 선택한다. 
+
+##### 1) 분석 전 패키지 불러오기 
+```{r}
+library(tidymodels)
+library(dplyr)
+library(ggplot2)
+library(readr)
+```
+
+##### 2) 데이터 로드 및 복제
+```{r}
+disease_raw <- read_delim("cardiovascular_disease_dataset.csv", delim = ";")
+
+df <- disease_raw
+```
+
+##### 3) 데이터 탐색 및 전처리
+```{r}
+# 데이터 탐색
+glimpse(df)
+head(df)
+tail(df)
+dim(df)
+summary(df)
+structure(df) # gender, cholesterol, gluc, smoke, alco, active 변수 이상치 없음 확인 
+View(df)
+table(is.na(df)) # 결측치 없음 확인
+
+# 타겟 변수 검토
+df %>% 
+  count(cardio) %>% 
+  mutate(ratio = n/sum(n)*100)
+# 50 : 50으로 골고루 있음 확인 
+class(df$cardio)
+
+# 타겟변수 전처리
+df <- df %>% 
+  mutate(cardio = ifelse(cardio ==1, "cardio" , "healthy"),
+         cardio = factor(cardio, levels = c("cardio","healthy")))
+
+# 타겟변수 순서 확인
+df %>% 
+  count(cardio) %>% 
+  mutate(ratio = n/sum(n)*100)
+levels(df$cardio)
+
+# 타겟변수 제외 변수 탐색 및 전처리
+class(df)
+
+# age : int(days) 이므로 "n세"로 change
+df <- df %>% 
+  mutate(age = age/365)
+
+table(df$gender)
+#summary(df$gluc)
+table(df$cholesterol)
+#summary(df$cholesterol)
+table(df$gluc)
+#summary(df$gluc)
+table(df$smoke)
+#summary(df$smoke)
+table(df$alco)
+#summary(df$alco)
+table(df$active)
+#summary(df$active)
+```
+
+### 4.1-1. 모델링 - basic model
+
+##### 1-1) 데이터 분할 및 검토 - Cross validation
+```{r}
+# 데이터 분할 (8:2)
+set.seed(10)
+df_split <- df %>% 
+  initial_split(prop = 0.8, strata = cardio)
+# -> disease와 healthy 50:50으로 나왔으므로
+df_split
+
+df_train <- training(df_split)
+df_test <- testing(df_split)
+
+#dim(df_train)
+#dim(df_test) 
+#glimpse(df_train)
+#glimpse(df_test)
+
+# 비율 비슷한지 확인
+df_train %>% 
+  count(cardio) %>% 
+  mutate(ratio = n/sum(n))
+
+df_test %>% 
+  count(cardio) %>% 
+  mutate(ratio = n/sum(n))
+```
+
+#### 2) 모델 생성
+이 부분 앞까지는 모든 모델에 동일, 이 부분부터 방법론에 따라 모델이 달라지므로 다른 방법 적용해 모델 만들 때 모델링 부분부터 수정!
+
+##### 2-1) 워크플로우 만들기
+##### 2-1-1) 레서피(recipe) 생성
+ - 우선 고유값 많은 변수 중 제외할 데이터를 선택하고, recipe 만들기
+```{r}
+library(dlookr)
+
+# 고유값 확률 높은 변수 (기준 0.1)
+diagnose(df_train) %>% 
+  filter(unique_rate > 0.1)
+# age는 numeric으로 당연히 고유값 많으므로 변수 포함, id는 제외
+
+stack_recipe <- 
+  recipe(cardio ~ ., data = df_train) %>% 
+  update_role(id, new_role = "id")
+
+stack_recipe
+```
+
+##### 2-1-2) 모델 세팅
+decision_tree한번 사용하는 모델을 사용
+```{r}
+tree_mod <- decision_tree() %>% 
+  set_engine("rpart") %>% 
+  set_mode("classification")
+```
+
+##### 2-1-3) 워크플로우 생성
+recipe, model을 가지고 워크플로우 생성
+```{r}
+stack_wf <- workflow() %>% 
+  add_recipe(stack_recipe) %>% 
+  add_model(tree_mod)
+
+stack_wf
+```
+
+##### 2-4) 적합(fit)하여 모델 생성
+검증데이터가 아닌, 학습데이터에 fit해야한다.
+학습데이터로 모델을 구축하고, 검증데이터로 과적합이 되었는지 최종 성능평가 확인
+```{r}
+set.seed(10)
+fit_tree <- stack_wf %>% 
+  fit(data = df_train)
+```
+
+##### +) 선택적인 부분
+RMarkdown에서 Run할 때 시간을 줄여주기 위해 모델을 RDS로 저장하기
+RDS 파일로 저장하고 불러들이면, 모델을 매번 부르는 것보다 시간 절약
+```{r}
+saveRDS(fit_tree,"fit_tree.rds")
+fit_tree <- readRDS("fit_tree.rds")
+# fit_tree에 RDS파일 저장되어 변수처럼 이용 가능
+```
+
+##### +) 변수 중요도 그래프로 확인 
+변수 중요도를 그래프로 확인해봄으로써 추후 중요한 변수를 가지고 파생변수를 만드는데 활용하는 과정 수행 가능
+```{r}
+library(vip)
+fit_tree %>%
+  extract_model() %>%
+  vip()
+```
+
+##### 2-5) 예측값
+train 데이터를 기반으로 한 모델의 예측값을 기존 데이터에 추가
+-> 비교할 수 있도록
+```{r}
+df_pred_train <- df_train %>% 
+  bind_cols(predict(fit_tree, df_train)) %>% 
+  rename(pred = .pred_class)
+df_pred_train
+```
+
+##### 3) 성능평가 
+학습데이터 성능평가를 하고, 검증데이터 성능평가의 경우에는 지금 하지 않고, 최종적인 모델이 확정되면 그때 검증데이터 성능평가를 하고 지표 확인, 과적합되었는지 확인 
+```{r}
+# 학습데이터 성능평가
+conf_train <- conf_mat(data = df_pred_train,
+                       truth = cardio,
+                       estimate = pred)
+conf_train
+summary(conf_train)
+```
+`accuracy 0.713, precision 0.760, recall = 0.622`
+###### 정상인을 심혈관 질환으로 분류하고 지켜보는 것보다 심혈관 질환을 놓치는 경우가 더 심각하므로 recall을 주의깊게 봐야한다고 판단
+
+### 4.1.3 - k-fold 방법 기반 모델 (튜닝 전)
+
+##### 2)모델링
+##### 2-1) k-fold 생성
+10번의 decision_tree를 만들기 -> 10-folds (보통 10folds를 기본으로 함)
+쪼개는건 주사위를 굴리기 때문에 **꼭!** 난수 고정
+```{r}
+# library(rsample)
+set.seed(10)
+folds <- vfold_cv(df_train, v = 10)
+folds
+```
+
+##### 2-2) folds별 모델 생성 및 예측
+모델 생성시 난수 고정해주지 않으면 매번 달라질 수 있기 때문에 **꼭!** 난수 고정
+```{r}
+set.seed(10)
+fit_tree_kfold <- 
+  stack_wf %>% 
+  fit_resamples(resamples = folds,
+                metrics = metric_set(accuracy, precision, recall, f_meas))
+```
+##### +) RDS로 저장하기 
+```{r}
+saveRDS(fit_tree_kfold,"fit_tree_kfold.rds")
+fit_tree_kfold <- readRDS("fit_tree_kfold.rds")
+```
+
+##### 2-2-1) 개별 fold 살펴보기
+fold들 각각의 accuracy, precision, recall, f_meas(f1 score)등의 지표 확인
+```{r}
+fit_tree_kfold %>% 
+  filter(id == "Fold01") %>% 
+  unnest(.metrics)
+```
+
+##### 3) 성능 평가
+마찬가지로 학습데이터 성능평가를 시행
+검증데이터 성능평가는 추후 이 모델이 최종적으로 확정된 모델일 때 확인
+```{r}
+collect_metrics(fit_tree_kfold)
+```
+`accuracy는 0.713, precision은 0.760, f_meas는 0.684, recall은 0.622`
+개별적인 folds의 평가지표의 평균
+basic model의 학습데이터 성능평가 결과와 동일(아래코드)
+```{r}
+summary(conf_train) %>%
+  slice(1, 13, 11, 12)    # 와 비교
+```
+
+##### 3-1) k-fold 성능평가 결과 개별적으로 살펴보기
+```{r}
+collect_metrics(fit_tree_kfold, summarize = F)
+```
+
+
+### 4.1.4 Tuning(튜닝)과정 후 k-fold 방법 기반 모델
+
+##### 2)모델링
+
+##### 2.1) 하이퍼파라미터 탐색 - K-fold 데이터
+###### 2.1-1) K-fold 생성 - 5 folds
+```{r}
+set.seed(10)
+folds <- vfold_cv(df_train, v = 5)
+folds
+```
+
+##### 2.1-2) 워크플로우 만들기 - 설계도
+###### 레서피 세팅 
+변수 검토 
+```{r}
+library(dlookr)
+diagnose(df_train) %>% 
+  filter(unique_rate > 0.1)
+```
+`age는 고유값이 많은게 당연, id만 제외`
+
+레시피 생성
+```{r}
+stack_recipe <- 
+  recipe(data = df_train, cardio ~ .) %>% 
+  update_role(id, new_role = "id")
+stack_recipe
+```
+
+
+###### 모델 세팅
+튜닝할 하이퍼 파라미터 설정
+- cost complexity : 비용 복잡도 (끝 노드의 개수)
+- tree_depth : 나무 깊이 
+```{r}
+tree_spec <- decision_tree(cost_complexity = tune(),
+                           tree_depth = tune()) %>% 
+  set_engine("rpart") %>% 
+  set_mode("classification")
+
+tree_spec
+```
+
+###### 워크플로우 생성
+```{r}
+stack_wf_tune <- workflow() %>% 
+  add_recipe(stack_recipe) %>% 
+  add_model(tree_spec)
+
+stack_wf_tune
+```
+
+###### tune grid 생성 
+다양한 하이퍼파라미터(사용자가 지정) 생성
+ -> 5*5 = 25세트
+```{r}
+tree_grid <- grid_regular(cost_complexity(),   # 비용 복잡도
+                          tree_depth(),  # 나무 깊이 
+                          levels = 5)
+tree_grid
+```
+ 
+
+##### 2.1.3) 모델 생성 및 예측 
+각 fold에 tree_grid 적용 모델 생성, 예측
+ -> fold(5) * grid(25) = 125모델 
+```{r}
+library(tune)
+set.seed(10)
+fit_tree_tune <- stack_wf_tune %>% 
+  tune_grid(resamples = folds,
+            grid = tree_grid,
+            metrics = metric_set(accuracy, precision, recall, f_meas, roc_auc))
+```
+
++) RDS파일에 저장 후 변수처럼 이용
+```{r}
+saveRDS(fit_tree_tune, "fit_tree_tune.rds")
+fit_tree_tune <- readRDS("fit_tree_tune.rds")
+```
+
+##### 2.1.4) 성능 평가 및 하이퍼파라미터 탐색
+개별 Fold 살펴보기
+ -> grid(25) * metrics(5) = 125개 성능 지표
+```{r}
+#library(tidyr)
+fit_tree_tune %>% 
+  filter(id == "Fold1") %>% 
+  unnest(.metrics)
+```
+
+하이퍼파라미터 살펴보기 - folds 평균
+```{r}
+fit_tree_tune %>% 
+  collect_metrics()
+```
+
+지표 가장 높은 후보
+```{r}
+fit_tree_tune %>% 
+  show_best("precision")
+
+fit_tree_tune %>% 
+  show_best("accuracy")
+
+fit_tree_tune %>% 
+  show_best("roc_auc")
+```
+
+###### 최적 선택 
+성능 지표 최고 중 cost_complexity, tree_depth 최저
+ -> 평가 지표가 높은 것 중 tree_depth와 cost_complexity가 낮은 값을 찾는 것
+ -> 즉 성능평가 결과는 좋은데 굳이 복잡할 필요 없기에 단순화된 모델을 위한 하이퍼파라미터 값 찾기
+```{r}
+best_tree <- fit_tree_tune %>% 
+  select_best("roc_auc")
+best_tree
+```
+` cost_complexity가 0.0000000001, tree_dept = 8 인게 성능 지표 최고 중 단순한 모델을 위한 하이퍼파라미터 값`
+
+##### 2.2) 최종 모델 생성 - training 데이터
+##### 2.2-1) 기존 워크플로우(stack_wf_tune) 업데이트
+```{r}
+# 현재 워크플로우
+stack_wf_tune
+
+# 업데이트
+# library(tune)
+final_wf <- stack_wf_tune %>% 
+  finalize_workflow(best_tree)
+final_wf
+```
+
+##### 2.2-2) 최종 모델 생성
+```{r}
+set.seed(10)
+fit_tree_tune_final <- final_wf %>% 
+  fit(data = df_train)
+
+fit_tree_tune_final
+```
+
+#### 3. 모델 활용 - training 데이터
+k-fold 모델에 대입
+folds별 모델 생성 및 예측
+```{r}
+set.seed(10)
+fit_tree_tune_kfold <- 
+  fit_tree_tune_final %>% 
+  fit_resamples(resamples = folds,
+                metrics = metric_set(accuracy, precision, recall, f_meas))
+
+fit_tree_tune_kfold
+```
+
+개별 fold 살펴보기
+```{r}
+fit_tree_tune_kfold %>% 
+  filter(id == "Fold01") %>% 
+  unnest(.metrics)
+```
+
+##### 성능 평가 - 학습데이터
+```{r}
+collect_metrics(fit_tree_tune_kfold)
+```
+`accuracy는 0.729, precision은 0.753, recall은 0.680, f_meas는 0.715`
+###### 다른 방법의 성능 지표와 비교 
+```{r}
+# 튜닝전의 k-fold모델과 비교(학습데이터 성능평가)
+collect_metrics(fit_tree_kfold)
+
+# basic 모델과 비교(학습데이터 성능평가) 
+summary(conf_train) %>%
+  slice(1, 13, 11, 12) 
+```
+둘다 ` 0.713, 0.760,0.622,0.684`
+
+결과적으로, **튜닝했을 때의 결과, 더 성능이 높다고 할 수 있음.**
+
+###### 다른 모델과 시각화 통해 비교
+```{r}
+library(rattle)
+# basic model
+fit_tree %>% 
+  extract_model() %>% 
+  fancyRpartPlot()
+
+# tuning
+fit_tree_tune_final %>% 
+  extract_model() %>% 
+  fancyRpartPlot()
+```
+
+###### k-fold 성능평가 결과 개별적으로 살펴보기
+```{r}
+tail(collect_metrics(fit_tree_kfold, summarize = F))
+```
+
+###### +) 추가적으로 만약 tuning한 결과가 최종 모델이라면? -> 예측성능 -test 데이터
+뒤에 나오는 random forest 모델이 더 학습데이터에 대한 성능이 높게 나오기 때문에 randomforest에 대한 검증데이터 성능평가를 해야함. 그래서 이 코드는 참고만 하자.
+```{r}
+# 1. 예측
+df_pred_test_tune_final <- df_test %>% 
+  bind_cols(predict(fit_tree_tune_final, df_test)) %>% 
+  rename(pred = .pred_class)
+
+# 2. 성능평가
+conf_test_tune_final <- conf_mat(data = df_pred_test_tune_final, truth = cardio,
+                                 estimate = pred)
+summary(conf_test_tune_final) %>% 
+  slice(1,11,12,13) %>% 
+  select(1,3)
+```
+
+### 4.1.5 randomforest 방법 기반 모델
+k-fold는 decision_tree를 여러번 하지만 randomforest는 decision_tree와 같은 다양한 방식들을 여러번 하는 것 -> 성능평가 결과 decision_tree만을 사용한 방식보다 더 높은 성능을 보일 수 밖에 없음
+##### recipe(레서피) 생성
+recipe - imputation: step_knnimpute()
+```{r}
+recipe_rf <- 
+  recipe(data = df, cardio ~ .) %>% 
+  update_role(id,new_role = "id") %>% 
+  step_knnimpute(all_predictors())
+```
+##### 모델 세팅
+```{r}
+tree_mod_rf <- rand_forest() %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("classification")
+```
+
+##### 워크플로우 생성
+```{r}
+stack_wf_rf <- workflow() %>% 
+  add_recipe(recipe_rf) %>% 
+  add_model(tree_mod_rf)
+```
+
+##### 모델 생성
+```{r}
+set.seed(10)
+#fit_tree_rf <- stack_wf_rf %>% 
+#  fit(data = df)
+# 주석처리한 코드는 교재에 있는대로, train, test 나누지 않은 경우
+
+# 아래는 train, test로 나눈 경우
+fit_tree_rf <- stack_wf_rf %>% 
+  fit(data = df_train)
+```
+
+##### +) RDS로 모델 저장
+```{r}
+saveRDS(fit_tree_rf, "fit_tree_rf.rds")
+fit_tree_rf <- readRDS("fit_tree_rf.rds")
+```
+
+##### 예측
+사실 이부분부터 바로 아래 성능평가까지는 train데이터, test데이터를 나눈 것을 각각 해야한다고 생각해 project.R에는 그렇게 코드를 짰는데 강사님 Machine Learning실습 교재에서는 안나누고 하셔서 일단 따라함.
+project.R코드에서는 나눠서 한 것 나와있음!
+```{r}
+# train, test 나누지 않은 경우. 즉 위의 코드처럼 data = df한 경우인데
+# 이렇게 나누지 않고 하고자 하는 경우, 위 코드에서 주석 처리한 data = df 코드 실행하고 data = df_train 코드 실행은 x하기!
+df_pred_rf <- df %>% 
+  bind_cols(predict(fit_tree_rf, df)) %>% 
+  rename(pred = .pred_class)
+df_pred_rf
+
+# 예측값(train 데이터 기반) 추가
+df_pred_train_rf <- df_train %>% 
+  bind_cols(predict(fit_tree_rf, df_train)) %>% 
+  rename(pred = .pred_class)
+df_pred_train_rf
+```
+
+##### 성능평가
+```{r}
+# data = df로, train과 test를 나누지 않은 경우의 성능평가 실행 코드
+#metrics(data = df_pred_rf,
+#        truth = cardio,
+#        estimate = pred)
+
+# 학습데이터 성능평가 (train과 test로 나눈 경우)
+conf_train_rf <- conf_mat(data = df_pred_train_rf,
+                       truth = cardio,
+                       estimate = pred)
+conf_train_rf
+summary(conf_train_rf) %>% 
+  slice(1,11,12,13)
+```
+`accuracy는 0.860, precision은 0.883, recall은 0.831, f_meas는 0.856`
+
+##### 앞선 방법들과의 학습데이터에 대한 성능평가 비교 # 
+```{r}
+collect_metrics(fit_tree_tune_kfold) # 튜닝한 k-fold
+collect_metrics(fit_tree_kfold) # 튜닝전의 k-fold
+summary(conf_train) %>%
+  slice(1, 13, 11, 12)    # basic모델- decision_tree
+```
+
+### 4.1.6 최종모델 선택
+성능평가 결과 randomforest방법이 가장 높게 나왔으므로 최종 모델로 randomforest방법 기반을 모델로 선택한다. 
+###### 최종모델 기반 검증데이터 성능평가
+이 부분은 사실 Project.R에 있는 코드로, 데이터를 train과 test로 나누지 않았다면, 이 성능지표 결과 말고 바로 위에 randomforest 성능 지표 결과를 그냥 보면 될 듯. 근데 만약 나눈다면 이 검증데이터 성능평가 지표를 이용해 과적합 여부와, 성능평가 지표 얼마나 나오는지 확인하면 됨
+```{r}
+# 예측값(test 데이터 기반) 추가
+df_pred_test_rf <- df_test %>% 
+  bind_cols(predict(fit_tree_rf,df_test)) %>% 
+  rename(pred = .pred_class)
+
+glimpse(df_pred_test_rf)  
+
+# 검증데이터 성능평가 -> randomforest모델 확정되었으므로 실행
+conf_test_rf <- conf_mat(data = df_pred_test_rf,
+                      truth = cardio,
+                      estimate = pred)
+conf_test_rf
+summary(conf_test_rf) %>% 
+  slice(1,11,12,13)
+```
+
+학습데이터 성능평가
+```{r}
+summary(conf_train_rf) %>% 
+  slice(1,11,12,13)
+```
+결론적으로, 이 데이터 분석 과정에 있어서 recall값이 precision보다 중요시 여겨지는데, 학습데이터에 비해 검증데이터에서 recall값이 조금 떨어졌기 때문에 약간의 과적합이 되었다고 생각할 수 있다. 그러나 무조건 심혈관 질환(disease)라고 판단할 때, 즉 다 disease라고 찍었을 때 -> 타겟변수의 비율인 0.5를 넘었으므로 그렇게 큰 문제가 없다고 판단된다. 즉 과적합이 나타나지 않은 것으로 보인다. 
+
+##### 5. 논의 
+###### 한계점 및 추후 분석 방향
+- 심혈관 질환을 예측할 수 있는 더 다양한 변수들을 추가했으면 좋겠다. 
+- 나이의 분포가 29~64세이므로 더 넓은 스펙트럼의 연령대에서 데이터를 수집하면 후에 10대, 70대의 심혈관 판정을 예측할 수 있을 것 같다는 생각했다.
+
+###### 보완할 점
+- randomforest, Tuning K-fold, Untuning K-fold, basic model을 사용했지만 더 나아가 파생변수 추가 혹은 앙상블 모형과 같은 다른 방법을 적용한 모델들을 만들어보고 머신러닝 모델의 성능을 높여야겠다고 생각했다.
+
+
+
+
