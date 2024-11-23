@@ -1,21 +1,46 @@
-# Rproject
-2021.08.27 R datamining project
+# CardioPrediction: A Machine Learning Approach to Cardiovascular Disease Prediction
+2021.08.27 R Project
 
-#### 심혈관 질환 환자 예측 프로젝트
+### Overview
+CardioPredict is a data analysis and machine learning project designed to predict the risk of cardiovascular disease.
+The project utilizes a dataset of health-related features to train and evaluate predictive models, aiming to identify individuals at high risk for cardiovascular conditions
 
-###### 데이터 : Cardiovascular Disease dataset | Kaggle
+### Features
+- Data Exploration:
+  Loaded and explored the dataset to understand its structure, summary statistics, and check for missing values.
+- Modeling:
+  Built and evaluated predictive models using decision trees and cross-validation techniques.
+  Focused on variables like gender, cholesterol, glucose levels, smoking, alcohol use, and physical activity.
+- Visualization:
+  Created insightful plots using ggplot2 for better data understanding and model performance analysis.
 
- (R_analysis - 공유_04_종합_데이터 분석 프로젝트_김영우 - Datasets - 02_Machine Learning - cardiovascular_disease_dataset)
+### Used
+- R Programming Language: For data manipulation, visualization, and modeling.
+- tidymodels: For streamlined machine learning workflows.
+- dplyr and ggplot2: For data wrangling and visualization.
+- readr: For efficient data loading.
 
-###### 방법 4가지 이용해 모델을 만들고 각각 성능평가(학습데이터) 한 값을 비교해서 최종적으로 선택된 randomfoest 검증데이터 성능평가 확인까지의 방향으로 진행.
+### Dataset
+- Source:
+  - cardiovascular_disease_dataset.csv
+- Features:
+  - Health metrics (e.g., cholesterol, glucose, physical activity)
+  - Behavioral factors (e.g., smoking, alcohol use)
+  - Target variable: Presence or absence of cardiovascular disease.
 
-###### - basic model (decision_tree 한번 사용하여 cross-validation (train - test data)
+### Steps
+1. Data Preparation:
+ - Loaded the dataset and verified data integrity (e.g., no missing values).
+ - Identified key features and ensured they were free from outliers.
+2. Modeling:
+ - Implemented a decision tree model.
+ - Used cross-validation for reliable model evaluation.
+ - Decision Tree, RandomForest
+3. Evaluation:
+ - Assessed model performance using metrics like accuracy and precision.
+4. Visualization:
+ - Created plots to analyze variable importance and model performance.
 
-###### - k-fold cross-validation (tuning x)
-
-###### - Tuning k-fold cross-validation (tunning o)
-
-###### - randomforest 
-
-
-###### - 결론은 가장 성능이 높게 나온 randomforest로 결정
+### Future Enhancements
+- Explore feature engineering techniques to improve prediction accuracy.
+- Integrate additional datasets to expand the scope of analysis.
