@@ -1,5 +1,5 @@
 # CardioPrediction: A Machine Learning Approach to Cardiovascular Disease Prediction
-2021.08.27 R Project
+R Project
 
 ### Overview
 CardioPredict is a data analysis and machine learning project designed to predict the risk of cardiovascular disease.
